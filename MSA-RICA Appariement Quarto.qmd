@@ -80,14 +80,14 @@ siret_ass_path = "~/CERISE/00-Espace-Personnel/alfonso.awadalla/Mes fichiers/sir
 
 msa_s = as.data.table(readRDS(msa_s_path))
 msa_ns = as.data.table(readRDS(msa_ns_path))
-# msa_ns23 = copy(msa_ns)
-# msa_ns17 = as.data.table(readRDS(msa_ns17_path))
-# msa_ns18 = as.data.table(readRDS(msa_ns18_path))
-# msa_ns19 = as.data.table(readRDS(msa_ns19_path))
-# msa_ns20 = as.data.table(readRDS(msa_ns20_path))
-# msa_ns21 = as.data.table(readRDS(msa_ns21_path))
-# msa_ns22 = as.data.table(readRDS(msa_ns22_path))
-# msa_ns24 = as.data.table(readRDS(msa_ns24_path))
+msa_ns23 = copy(msa_ns)
+msa_ns17 = as.data.table(readRDS(msa_ns17_path))
+msa_ns18 = as.data.table(readRDS(msa_ns18_path))
+msa_ns19 = as.data.table(readRDS(msa_ns19_path))
+msa_ns20 = as.data.table(readRDS(msa_ns20_path))
+msa_ns21 = as.data.table(readRDS(msa_ns21_path))
+msa_ns22 = as.data.table(readRDS(msa_ns22_path))
+msa_ns24 = as.data.table(readRDS(msa_ns24_path))
 tempstravails = fread(tempstravails_path)
 tempstravailr = fread(tempstravailr_path)
 caract = fread(caract_path)
@@ -95,8 +95,8 @@ dossier = fread(dossier_path)
 pactosiret1 = fread(path_pac1)
 pactosiret2 = as.data.table(read_excel(path_pac2))
 exploit = fread(path_exploit)
-# flores = as.data.table(read_parquet(path_flores, col_select = !ends_with("_1")))
-# ra = as.data.table(read_parquet(path_ra))
+flores = as.data.table(read_parquet(path_flores, col_select = !ends_with("_1")))
+ra = as.data.table(read_parquet(path_ra))
 siret_ass = fread(siret_ass_path, colClasses = "character")
 
 
@@ -1299,7 +1299,7 @@ Dans le fichier MSA "salariés", la variable **CQUASAL == 906** désigne les con
 
 La base **FLORES (INSEE)** fournit, par établissement ou entreprise, le nombre et les heures des intérimaires sur l’année. Seul problème: les données sont disponibles en N+2, ce qui limite leur utilité pour un RICA en N+1. On souhaite malgré tout explorer le champs des possibles.
 
-```{r, eval=FALSE}
+```{r}
 #---------------------------
 # Appariement FLORES ↔ RICA
 #---------------------------
@@ -1327,7 +1327,7 @@ L’appariement FLORES–RICA via le SIREN permet de retrouver une centaine d’
 
 Les **502 SIREN introuvables** correspondent vraisemblablement, comme l’a noté Corentin, à des salariés rattachés à une autre entreprise de l’employeur. Ce problème pourrait être résolu ultérieurement via web scraping ou API pour retrouver le bon SIRET.
 
-```{r, eval=FALSE}
+```{r}
 ## Analyse visuelle des données
 # View(flores_siret_rica)
 
@@ -1361,7 +1361,7 @@ Ce qui nous intéresse prioritairement, c’est la part de micro-BA dans le cham
 
 Nous nous contenterons donc ici d’estimer la part des micro-BA sur l’ensemble des exploitations actives.
 
-```{r, eval=FALSE}
+```{r}
 
 #--------------
 # Process. MSA
