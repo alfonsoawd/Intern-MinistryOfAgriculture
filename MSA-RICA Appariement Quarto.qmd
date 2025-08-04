@@ -1,0 +1,1445 @@
+---
+title: "APPARIEMENT MSA ↔ RICA (SUITE)"
+author: "Alfonso AWADALLA"
+output-file: "appariement_msa_rica_2023"
+format:
+  html:
+    theme: flatly     
+    toc: true
+    toc-depth: 3
+    toc-location: right
+    toc-title: "Sommaire"
+    number-sections: true
+    code-fold: true
+    code-summary: "Afficher le code"
+    code-tools: true
+    smooth-scroll: true
+    highlight-style: tango
+    df-print: paged
+    css: styles.css         
+---
+
+L’objectif de ce travail est d’évaluer dans quelle mesure les données de la MSA peuvent être mobilisées pour préremplir certaines variables du questionnaire RICA, en particulier sur la main-d’œuvre des exploitations agricoles.
+
+Deux éléments structurent l’analyse : la disponibilité calendaire des données et la qualité de l’appariement entre sources.
+L’enquête RICA est conduite entre mars et septembre de l’année N+1. À la même période, le SSP dispose de la base MSA non-salariés (dans une version provisoire, mais déjà exploitable). En revanche, la base MSA salariés n’est transmise qu’à l’été, ce qui peut limiter les possibilités de contrôle ou de préremplissage avant ou pendant la campagne de collecte.
+
+Au-delà de cette contrainte de calendrier, nous cherchons à voir dans quelle mesure les bases MSA peuvent fournir des informations cohérentes et exploitables. Nous commençons par comparer les données RICA avec la base MSA non-salariés, puis avec la base MSA salariés, en nous concentrant sur les variables comparables : nombre d'individu, age/sexe des individus.... Ces premières comparaisons permettent d’identifier un certain nombre de non-appariements (par SIRET) ou d’écarts de composition, que nous explorons dans un second temps pour en comprendre l’origine.
+
+Enfin, deux analyses complémentaires sont menées :
+
+- Un appariement avec la base FLORES de l’Insee afin d’identifier d’éventuels cas de salariat intérimaire via la variable RIDEA ;
+
+- Une estimation via la base MSA de la part des exploitations relevant du régime micro-BA, afin de la comparer aux données issues du Recensement Agricole (RA), qui ne se renouvelle que tous les 10 ans.
+
+## INITIALISATION : LIBRAIRIES & IMPORT DES DONNÉES
+
+```{r}
+#| output: FALSE
+#--------------
+#  Librairies
+#--------------
+
+library(data.table)
+library(janitor)
+library(dplyr)
+library(stringr)
+library(lubridate)
+library(readxl)
+library(arrow)
+library(ggplot2)
+
+#----------------------
+# Chemins des fichiers
+#----------------------
+
+msa_s_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2023/msa_sal_src_2023.rds"
+msa_ns_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2023/msa_ns_src_2023.rds"
+msa_ns17_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2017/msa_ns_src_2017.rds"
+msa_ns18_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2018/msa_ns_src_2018.rds"
+msa_ns19_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2019/msa_ns_src_2019.rds"
+msa_ns20_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2020/msa_ns_src_2020.rds"
+msa_ns21_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2021/msa_ns_src_2021.rds"
+msa_ns22_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2022/msa_ns_src_2022.rds"
+msa_ns24_path = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15080_MSA/MSA_2024/msa_ns_src_2024.rds"
+tempstravails_path = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_brutes/Capibara/TEMPSTRAVAILS.csv"
+tempstravailr_path = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_brutes/Capibara/TEMPSTRAVAILR.csv"
+caract_path = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_brutes/Capibara/CARACTERISTIQUES.csv"
+dossier_path = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_brutes/Capibara/DOSSIER.csv"
+path_pac1 = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_traitees/10_Collecte/90_Subventions/extractions_ASP/Surfaces-2023_DOSSIER-PAC_20241019.csv"
+path_pac2 = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_traitees/10_Collecte/90_Subventions/correction_postcollecte2024-12-10/pacage_appariement.xlsx"
+path_exploit = "~/CERISE/02-Espace-de-Production/100_Comptes_Revenus/10010_RICA/RICA_2023/Donnees_brutes/Capibara/EXPLOITATION.csv"
+path_flores = "~/CERISE/03-Espace-de-Diffusion/150_Sources_externes/15070_INSEE/FLORES/1_TABLES/2023/flores_etab_2023.parquet"
+path_ra = "~/CERISE/00-Espace-Personnel/alfonso.awadalla/Mes fichiers/ra20.parquet"
+siret_ass_path = "~/CERISE/00-Espace-Personnel/alfonso.awadalla/Mes fichiers/siren_associes.csv"
+
+
+#-----------------
+# Import données
+#-----------------
+
+msa_s = as.data.table(readRDS(msa_s_path))
+msa_ns = as.data.table(readRDS(msa_ns_path))
+# msa_ns23 = copy(msa_ns)
+# msa_ns17 = as.data.table(readRDS(msa_ns17_path))
+# msa_ns18 = as.data.table(readRDS(msa_ns18_path))
+# msa_ns19 = as.data.table(readRDS(msa_ns19_path))
+# msa_ns20 = as.data.table(readRDS(msa_ns20_path))
+# msa_ns21 = as.data.table(readRDS(msa_ns21_path))
+# msa_ns22 = as.data.table(readRDS(msa_ns22_path))
+# msa_ns24 = as.data.table(readRDS(msa_ns24_path))
+tempstravails = fread(tempstravails_path)
+tempstravailr = fread(tempstravailr_path)
+caract = fread(caract_path)
+dossier = fread(dossier_path)
+pactosiret1 = fread(path_pac1)
+pactosiret2 = as.data.table(read_excel(path_pac2))
+exploit = fread(path_exploit)
+# flores = as.data.table(read_parquet(path_flores, col_select = !ends_with("_1")))
+# ra = as.data.table(read_parquet(path_ra))
+siret_ass = fread(siret_ass_path, colClasses = "character")
+
+
+#-----------------
+# Fonctions
+#-----------------
+
+# Fonction de nettoyage des SIRET à 14 chiffres
+clean_siret = function(x) {
+  x = str_trim(as.numeric(x))
+  too_short = !is.na(x) & nchar(x) < 14
+  x[too_short] = str_pad(x[too_short], width = 14, pad = "0")
+  x
+}
+
+```
+
+## PREPROCESSING (PRÉPARATION DES CHAMPS SIRET)
+
+Pour la MSA, rien à faire : le SIRET est directement disponible. En revanche, pour les bases salariés et non-salariés de RICA, plusieurs appariements sont nécessaires pour retrouver le SIRET et sélectionner les exploitations valides.
+
+Les SIRET issus de RICA peuvent être obsolètes (changement de statut ou d'entreprise). Pour fiabiliser l’identification, on remplace ceux-ci par les SIRET liés au PACAGE utilisé pour percevoir les aides, lorsque les deux diffèrent. Cette méthode, plus robuste, ne s’applique toutefois qu’aux exploitations ayant demandé la PAC (\~6 500 sur 7 200 en 2023), ce qui laisse subsister quelques anomalies, probablement marginales.
+
+```{r}
+#| output: FALSE
+#------------------------------------------------
+# 1 - Nettoyage des SIRET dans les bases MSA
+#------------------------------------------------
+
+# Harmonisation du nom de variable et nettoyage des formats
+setnames(msa_ns, "NUM_EXP", "SIRET")
+msa_ns[, SIRET := clean_siret(SIRET)]
+msa_s[,  SIRET := clean_siret(SIRET)]
+
+
+#------------------------------------------------
+# 2 - Appariement des SIRET dans les bases RICA
+#------------------------------------------------
+
+# 2.0 Construction d'une table SIRET ↔ NOM_DOSSIER via les données PACAGE
+
+siret_pacage = merge(
+  pactosiret1,
+  pactosiret2,
+  by.x = "Pacage",
+  by.y = "PACAGE",
+  all.y = TRUE  
+)
+
+## 2.1 Préparation des données RICA - salariés
+
+# Fusion des tables : travail + caractéristiques + état de validation + SIRET PACAGE
+rica_s = merge(
+  tempstravails,
+  caract[, .(Identifiant_dossier, SIRET, FJURI, ANNEE)],
+  by = "Identifiant_dossier",
+  all.x = TRUE
+)
+
+rica_s = merge(
+  rica_s,
+  dossier[, .(Identifiant_dossier, ETAT_VALIDATION_PAR_ROLE)],
+  by = "Identifiant_dossier",
+  all.x = TRUE
+)
+
+rica_s = merge(
+  rica_s,
+  siret_pacage[, .(NOM_DOSSIER = as.numeric(NOM_DOSSIER), SIRET_pacage = SIRET)],
+  by = "NOM_DOSSIER",
+  all.x = TRUE
+)
+
+# Remplacement du SIRET RICA par celui de PACAGE si disponible
+rica_s[, SIRET := fifelse(!is.na(SIRET_pacage), SIRET_pacage, SIRET)]
+rica_s[, SIRET_pacage := NULL] # Suppression de la variable temporaire
+
+# Sélection des exploitations validées et nettoyage du champ SIRET
+rica_s = rica_s[ETAT_VALIDATION_PAR_ROLE == 4]
+rica_s[, SIRET := clean_siret(SIRET)]
+rica_s = rica_s[!duplicated(SIRET),]
+
+## 2.2 Préparation des données RICA - non-salariés
+
+rica_ns = merge(
+  tempstravailr,
+  caract[, .(Identifiant_dossier, SIRET, FJURI, ANNEE)],
+  by = "Identifiant_dossier",
+  all.x = TRUE
+)
+
+rica_ns = merge(
+  rica_ns,
+  dossier[, .(Identifiant_dossier, ETAT_VALIDATION_PAR_ROLE)],
+  by = "Identifiant_dossier",
+  all.x = TRUE
+)
+
+rica_ns = merge(
+  rica_ns,
+  siret_pacage[, .(NOM_DOSSIER = as.numeric(NOM_DOSSIER), SIRET_pacage = SIRET)],
+  by = "NOM_DOSSIER",
+  all.x = TRUE
+)
+
+# Remplacement du SIRET RICA par celui de PACAGE si disponible
+rica_ns[, SIRET := fifelse(!is.na(SIRET_pacage), SIRET_pacage, SIRET)]
+rica_ns[, SIRET_pacage := NULL] # Suppression de la variable temporaire
+
+# Sélection des exploitations validées et nettoyage du champ SIRET
+rica_ns = rica_ns[ETAT_VALIDATION_PAR_ROLE == 4]
+rica_ns[, SIRET := clean_siret(SIRET)]
+
+# Suppression des doublons sur le SIRET dans la base non-salariés
+rica_ns_dedup = rica_ns[!duplicated(SIRET)]
+
+```
+
+## APPARIEMENT RICA ↔ MSA (NON-SALARIÉS)
+
+### Appariement SIRET des données MSA/RICA
+
+14% des exploitations RICA 2023 ne sont pas appariés avec les données MSA: à voir pourquoi mais j'ai pu apercevoir des valeurs SIRET de "00000000000000" dans le fichier MSA?? Pour les données non-matchés, la distribution par type d'exploitation est assez représentative du total.
+
+
+```{r}
+#--------------------------
+# PEUT ON MATCHER LES SIRET RICA/MSA
+#--------------------------
+
+## Match exact (en gardant toutes les lignes RICA)
+rica2 = merge(
+  rica_ns_dedup,
+  msa_ns[!duplicated(SIRET)],   
+  by    = "SIRET",
+  all.x = TRUE
+)
+
+#--------------------------
+# DIAGNOSTIQUE 
+#--------------------------
+
+## Matchs exacts / match manquants
+matched = nrow(rica2[!is.na(A_IDENT)])
+unmatched = nrow(rica2[ is.na(A_IDENT)])
+cat("SIRETs matchés:", matched, "\nSIRETs non-matchés:", unmatched, "\n")
+
+## En appariant avec le SIREN
+rica2[, SIREN := substr(SIRET, 1, 9)]
+msa_ns[, SIREN := substr(SIRET, 1, 9)]
+
+siren_in_msa = unique(msa_ns$SIREN)
+rica2[, siren_match := SIREN %in% siren_in_msa]
+
+cat(
+  "SIRENs matchés:", sum(rica2$siren_match),
+  "\nSIRENs non-matchés:", sum(!rica2$siren_match), "\n"
+)
+
+## Voir les catégories juridiques des exploitations non matchés
+# no_match = rica2[is.na(A_IDENT)]
+# tabyl(no_match$FJURI)
+```
+
+
+### Composition non-salariale
+
+Le but de cette partie est de récupérer les informations MSA sur les variables d'intérêt et les comparer avec RICA afin de voir si le MSA est fiable mais aussi faire part des limitations trouvés.
+
+#### Combien de non-salariés par epxloitation?
+
+Le fichier non-salarié du MSA précise que chaque ligne correspond à un chef d'exploitation. Dans le RICA nous n'avons qu'un chef (le plus jeune par convention), d'autres exploitants mais aussi des aides non-salariées (conjoint, famille...). Le but est donc de comparer, exploitation par exploitation, la composition non-salariale de la MSA avec le RICA.
+
+```{r}
+#--------------------------
+# COMPOSITION NON-SALARIÉ
+#--------------------------
+
+## Apparier la MSA aux SIRET valides de RICA
+rica3 = merge(
+  rica_ns_dedup[, .(SIRET)],
+  msa_ns,
+  by = "SIRET",
+  all.x = TRUE
+)[!is.na(A_IDENT), ]
+
+## Calculer le nombre d'exploitants non-salariés par exploitation (MSA)
+num_exploit = rica3[, .(count_MSA = .N), by="SIRET"]
+
+## Calculer le nombre d'exploitants/aides non-salariés par exploitation (RICA)
+matched_siret = num_exploit[,SIRET]
+rica_matched = rica_ns[SIRET %in% matched_siret, ]
+### Nombre d'exploitants par exploitation
+num_exploit_rica_tot = rica_matched[, .(count_RICA = .N), by="SIRET"]
+### Nombre d'aides non-salariées par exploitation
+num_rica_aide_ns = rica_matched[, .(count_RICA_AIDE_NS = sum(STATU==3)), by="SIRET"]
+### Fusionner les deux
+num_exploit_rica = merge(
+  num_exploit_rica_tot,
+  num_rica_aide_ns,
+  by="SIRET",
+  all = TRUE
+)
+
+# Fusionner les comptes MSA et RICA
+num_exploit = merge(
+  num_exploit,
+  num_exploit_rica,
+  by="SIRET",
+  all = TRUE
+)
+
+#--------------------------
+# ANALYSE
+#--------------------------
+
+# Indicateurs pour savoir si les effectifs sont similaires ou différents
+num_exploit[, same_num := count_MSA==count_RICA]
+num_exploit[, same_without_aides := fifelse(
+  same_num==FALSE, fifelse(
+    count_RICA - count_RICA_AIDE_NS == count_MSA, TRUE, FALSE
+  ), FALSE
+)]
+num_exploit[, less_in_MSA := count_MSA<count_RICA & same_without_aides==FALSE]
+num_exploit[, more_in_MSA := count_MSA>count_RICA]
+
+# Proportion de chaque catégorie (indicateurs)
+num_exploit[, .(
+  same_num = paste0(round((sum(same_num)/nrow(num_exploit))*100, 1),"%"),
+  same_without_aides = paste0(round((sum(same_without_aides)/nrow(num_exploit))*100, 1),"%"),
+  less_in_MSA = paste0(round((sum(less_in_MSA)/nrow(num_exploit))*100, 1), "%"),
+  more_in_MSA = paste0(round((sum(more_in_MSA)/nrow(num_exploit))*100, 1), "%")
+)]
+
+```
+
+Environ 91% des exploitations appariées (6300 sur les 7200) présentent le même nombre de non-salariés dans les données MSA et RICA, ce qui est une bonne nouvelle. Sur les 1,6 % d'exploitation contenant des aides non salariés (dans RICA), si l'on soustrait ce nombre d'aidant du nombre total de non-salariés (RICA) on obtient exactement le même nombre de non-salariés que dans le MSA --> on en déduit que les aidants non-salariés (famille) ne sont effectivement pas présents dans les données MSA. Cependant on y trouve deux colonnes : nombre d'aides familiaux majeurs ou mineurs (>16ans ou >14ans>16ans), mais pas plus d'info sur eux (permanent ou saisonnier, genre etc...).
+
+Environ 8% des exploitations montrent des compositions différentes dont la majeur partie correspond à un nombre d'exploitant plus grand dans le RICA que MSA. Je me demande si ce n'est pas lié à certaines typo, comme un aidant (conjoint) représenté comme exploitant dans RICA mais aide dans MSA?? Creuser ces anomalies et enfin vérifier que les autres characteristiques des main d'ouvre non-salariées sont similaires (age, genre...).
+
+#### Analyse des cas ou il y a plus de personnes dans la MSA que le RICA
+
+Ici, nous nous intéressons aux ~80 SIRET (soit 1,3 % de RICA) pour lesquels le nombre de non-salariés est plus élevé dans la MSA que dans RICA. Cette situation peut paraître surprenante, car les aidants non-salariés ne figurent que dans RICA et non dans la MSA ; on s'attend donc à ce que le nombre de non-salariés y soit supérieur.
+
+Une hypothèse est que les individus en "excès" dans la MSA sont en réalité des inactifs ou des retraités. En effet, bien que le champ MSA ne contienne en principe que les chefs d’exploitation actifs, il inclut également les cotisants solidaires, les inactifs cotisants au régime complémentaire obligatoire (RCO) et les cotisants volontaires à l’assurance vieillesse.
+
+Nous procédons donc à un appariement entre les non-salariés de cet échantillon de 80 SIRET, entre les bases MSA et RICA, afin d’identifier les individus correspondants et ceux présents uniquement dans la MSA. Cet appariement repose uniquement sur l’année de naissance et le sexe, les seuls identifiants communs disponibles.
+
+```{r}
+# ==============================================================================
+# ANALYSE DES CAS OU IL Y A PLUS DE PERSONNES DANS LA MSA QUE LE RICA
+# ==============================================================================
+
+## Cas où MSA > RICA
+### Récupération données MSA
+siret_more_msa = num_exploit[more_in_MSA == TRUE & SIRET!="00000000000000", SIRET]
+msa_more = msa_ns[SIRET %in% siret_more_msa, ][order(SIRET)]
+setnames(msa_more, "NAIS_AN", "ANAIS")
+msa_more[, ANAIS := as.integer(ANAIS)]
+msa_more[, SEXEP := fifelse(SEXE == 1, "M", "F")]
+
+### Récupération données RICA
+rica_more = rica_ns[SIRET %in% siret_more_msa, ][order(SIRET)]
+rica_more[, ANAIS := as.integer(ANAIS)]
+
+### Mélange des deux
+all_more = merge(rica_more, msa_more, by = c("SIRET", "ANAIS", "SEXEP"), all = TRUE)
+all_more[, matched := (!is.na(Identifiant_dossier)) & (!is.na(A_IDENT))]
+all_more[, msa_only := (is.na(Identifiant_dossier)) & (!is.na(A_IDENT))]
+all_more[, rica_only := (!is.na(Identifiant_dossier)) & (is.na(A_IDENT))]
+
+### Résumé pour chaque catégorie
+all_more[, .(
+  matched     = paste0(sum(matched, na.rm = TRUE), " (", round(100 * sum(matched, na.rm = TRUE) / .N, 1), "%)"),
+  msa_only    = paste0(sum(msa_only, na.rm = TRUE), " (", round(100 * sum(msa_only, na.rm = TRUE) / .N, 1), "%)"),
+  rica_only   = paste0(sum(rica_only, na.rm = TRUE), " (", round(100 * sum(rica_only, na.rm = TRUE) / .N, 1), "%)")
+)]
+
+
+# ## Vérifications supplémentaires
+# nrow(all_more[REG_MAL %in% c(3,4,5), ][matched == TRUE, ])
+# nrow(msa_more[REG_MAL %in% c(3,4,5), ])
+# nrow(rica3[REG_MAL %in% c(3,4,5), ])
+# nrow(all_more[msa_only == TRUE, ][EXO_PFA == 1, ])
+# nrow(all_more[EXO_JA == 1, ][msa_only == TRUE, ])
+# nrow(all_more[ASSU_INVAL == 1, ][msa_only == TRUE, ])
+# nrow(all_more[OPT_DED == 2, ][matched == TRUE, ])
+# 
+# ## Nombre de branches d'assujettissement
+# all_more[, nb_assujettissements := 
+#            as.integer(ASSU_AME == 1) +
+#            as.integer(ASSU_IJAME == 1) +
+#            as.integer(ASSU_RCO == 1) +
+#            as.integer(ASSU_INVAL == 1) +
+#            as.integer(ASSU_PFA == 1) +
+#            as.integer(ASSU_AVA == 1) +
+#            as.integer(ASSU_AVI == 1)
+# ]
+# all_more[, exonere_total := as.integer(EXO_AME == 1 & EXO_PFA == 1 & EXO_AVA == 1 & EXO_AVI == 1)]
+# all_more[, rica_out := as.integer(nb_assujettissements < 3)]
+# 
+# nrow(all_more[rica_out == 1, ])
+# nrow(all_more[nb_assujettissements < 2, ])
+# nrow(all_more[msa_only == TRUE, ][nb_assujettissements < 2, ])
+# nrow(all_more[exonere_total == 1, ])
+# nrow(all_more[msa_only == TRUE, ][exonere_total == 1, ])
+```
+
+Parmi les ~200 non-salariés MSA étudiés, 96 ont été identifiés comme étant "en trop" par rapport aux données RICA. L'objectif était alors de déterminer une ou plusieurs variables permettant de filtrer ces individus, afin de pouvoir les exclure si la base MSA devait être utilisée pour injecter des données non-salariés dans RICA.
+
+Cette partie du code est actuellement mise en commentaire, mais en résumé : malgré l’exploitation de l’ensemble des informations disponibles (assujettissement à certains types de cotisations, régime maladie, etc.), il n’a pas été possible d’identifier de manière systématique ces individus ni de comprendre précisément leur statut.
+
+#### Analyse approfondie des cas où le nombre de non-salariés est similaire
+
+Ici nous regardons si pour le cas où le nombre de non-salariés est similaire entre MSA-RICA, ces individus sont bien les mêmes. Pour cela encore une fois, nous regardons le SIRET (l'exploitation) le sexe et l'année de naissance de la personne, en faisant l'hypothèse qu'il y a très peu de chance que de personnes du même sexe et du même âge travaillent ensemble. 
+
+```{r}
+#--------------------------------
+# Cas où MSA = RICA
+#--------------------------------
+
+### Récupération données MSA
+siret_same_msa = num_exploit[same_num == TRUE, SIRET]
+msa_same = msa_ns[SIRET %in% siret_same_msa, ][order(SIRET)]
+setnames(msa_same, "NAIS_AN", "ANAIS")
+msa_same[, ANAIS := as.integer(ANAIS)]
+msa_same[, SEXEP := fifelse(SEXE == 1, "M", "F")]
+
+### Récupération données RICA
+rica_same = rica_ns[SIRET %in% siret_same_msa, ][order(SIRET)]
+rica_same[, ANAIS := as.integer(ANAIS)]
+
+#--------------------------------
+# Appariement exact
+#--------------------------------
+
+# Mélange des deux
+all_same = merge(rica_same, msa_same, by = c("SIRET", "ANAIS", "SEXEP"), all = TRUE)
+all_same[, matched := (!is.na(Identifiant_dossier)) & (!is.na(A_IDENT))]
+all_same[, msa_only := (is.na(Identifiant_dossier)) & (!is.na(A_IDENT))]
+all_same[, rica_only := (!is.na(Identifiant_dossier)) & (is.na(A_IDENT))]
+
+# Résumé pour chaque catégorie
+all_same[, .(
+  matched     = paste0(sum(matched, na.rm = TRUE), " (", round(100 * sum(matched, na.rm = TRUE) / nrow(msa_same), 1), "%)"),
+  msa_only    = paste0(sum(msa_only, na.rm = TRUE), " (", round(100 * sum(msa_only, na.rm = TRUE) / nrow(msa_same), 1), "%)"),
+  rica_only   = paste0(sum(rica_only, na.rm = TRUE), " (", round(100 * sum(rica_only, na.rm = TRUE) / nrow(msa_same), 1), "%)")
+)]
+
+#--------------------------------
+# Appariement approximatif
+#--------------------------------
+
+# règles:
+#  - si le sexe est le même, autoriser une différence d'âge de 3 ans ou de 10 ans seulement si le dernier chiffre est le même
+#  - si l'année de naissance et la même mais que le sexe est différent, autoriser l'appariement 
+#  - Dans les deux cas, garder les informations contenues dans les données MSA
+
+# 1. Appariement exact
+exact = merge(
+  rica_same, msa_same,
+  by = c("SIRET", "ANAIS", "SEXEP"),
+  all = TRUE
+)
+exact[, matched := (!is.na(ID_SURICATE_TEMPSTRAVAILR)) & (!is.na(A_IDENT))]
+exact[, msa_only := (is.na(ID_SURICATE_TEMPSTRAVAILR)) & (!is.na(A_IDENT))]
+exact[, rica_only := (!is.na(ID_SURICATE_TEMPSTRAVAILR)) & (is.na(A_IDENT))]
+
+# 2. Extraction des unmatched
+msa_only = exact[msa_only == TRUE, .SD, .SDcols = names(msa_same)]
+rica_only = exact[rica_only == TRUE, .SD, .SDcols = names(rica_same)]
+
+# 3. Appariement approximatif (cartésienne par SIRET)
+approx_pairs = merge(
+  rica_only, msa_only,
+  by = "SIRET", allow.cartesian = TRUE,
+  suffixes = c("_rica", "_msa")
+)
+
+# 4. Application des règles d’appariement
+approx_pairs[, age_diff := abs(ANAIS_rica - ANAIS_msa)]
+approx_pairs[, match_approx := (
+  (SEXEP_rica == SEXEP_msa & (age_diff <= 3 | (age_diff == 10 & substr(ANAIS_rica, 4, 4) == substr(ANAIS_msa, 4, 4)))) |
+    (ANAIS_rica == ANAIS_msa & SEXEP_rica != SEXEP_msa)
+)]
+
+# 5. Filtrer, ordonner, et garder les meilleurs appariements 1:1
+approx = approx_pairs[match_approx == TRUE]
+setorder(approx, SIRET, ID_SURICATE_TEMPSTRAVAILR, A_IDENT, age_diff)
+approx = approx[
+  !duplicated(ID_SURICATE_TEMPSTRAVAILR) &
+    !duplicated(A_IDENT)
+]
+
+# 6. Reformer les colonnes comme pour un all_same
+approx[, `:=`(
+  ANAIS = ANAIS_msa,
+  SEXEP = SEXEP_msa,
+  matched = TRUE,
+  msa_only = FALSE,
+  rica_only = FALSE
+)]
+
+# Reprendre colonnes d'origine
+approx_clean = approx[, c(names(rica_same), names(msa_same), "ANAIS", "SEXEP", "matched", "msa_only", "rica_only"), with = FALSE]
+
+# 7. Reconstituer la base finale
+# Prendre les exact match non dupliqués
+exact_final = exact[matched == TRUE | msa_only == TRUE | rica_only == TRUE]
+exact_final = exact_final[!paste0(SIRET, A_IDENT) %in% paste0(approx_clean$SIRET, approx_clean$A_IDENT) &
+                            !paste0(SIRET, ID_SURICATE_TEMPSTRAVAILR) %in% paste0(approx_clean$SIRET, approx_clean$ID_SURICATE_TEMPSTRAVAILR)]
+
+# Combine exacts et approximatifs
+all_same = rbindlist(list(exact_final, approx_clean), fill = TRUE)
+
+# 8. Résumé global
+all_same[, .(
+  matched     = paste0(sum(matched, na.rm = TRUE), " (", round(100 * sum(matched, na.rm = TRUE) / nrow(msa_same), 1), "%)"),
+  msa_only    = paste0(sum(msa_only, na.rm = TRUE), " (", round(100 * sum(msa_only, na.rm = TRUE) / nrow(msa_same), 1), "%)"),
+  rica_only   = paste0(sum(rica_only, na.rm = TRUE), " (", round(100 * sum(rica_only, na.rm = TRUE) / nrow(msa_same), 1), "%)")
+)]
+
+```
+Le premier tableau correspond à un appariement exact sur les variables SIRET, sexe et année de naissance, tandis que le second repose sur un appariement approximatif, autorisant une légère différence d’âge, probablement liée à des erreurs de saisie.
+
+Les résultats sont globalement positifs : dans l’appariement exact, 95,4% des non-salariés correspondent parfaitement, et ce taux atteint 98,5% avec l’appariement flexible. Il reste toutefois 2-5% de cas pour lesquels les individus semblent différents, sans que l’on puisse en identifier clairement la raison.
+
+
+## APPARIEMENT RICA ↔ MSA (SALARIÉS)
+
+### Diagnostic sur l'appariement RICA-MSA salariés
+
+Chaque ligne dans le RICA correspond à une exploitation avec ses données agrégées. Dans la MSA, chaque ligne correspond à un salarié --> plusieurs par SIRET et les SIRET sans salariés n'apparaissent pas.
+
+Sur les 3797 exploitations/SIRET contenant des salariés (RICA), 3460 ont étés retrouvés dans la MSA --> sûrement du à des SIRET mal renseignés --> l'appariement peut toutefois être plus robuste (en passant par le PACAGE etc...)
+
+```{r}
+# ==============================================================================
+# APPARIEMENT EXACT MSA ↔ RICA
+# ==============================================================================
+
+## Appariement exact par SIRET
+rica2 <- merge(
+  rica_s,
+  msa_s[!duplicated(SIRET)],
+  by = "SIRET",
+  all.x = TRUE
+)
+
+## Diagnostics d’appariement
+rica2[, `:=`(
+  salarie_in_MSA = !is.na(NUM),
+  salarie_in_RICA = TVLTT>0
+)]
+
+# Summary table
+rica2[, .(Count_of_exploitants = .N), by = .(salarie_in_MSA, salarie_in_RICA)]
+
+```
+
+### Quelles données peut-on récupérer dans la MSA?
+
+| Variables RICA | Définition | Équiv. MSA |
+|------------------------|------------------------|------------------------|
+| ANA09 | Année de naissance du chef d’exploitation salarié | DNAIIND |
+| TVL09 | Temps de travail du chef d’exploitation salarié | — |
+| TVL10 | Temps de travail des autres salariés réguliers | — |
+| TVL11 | Temps de travail des salariés non réguliers | — |
+| EFF08 | Effectif de main-d’œuvre non salariée non régulière | PAS POSSIBLE |
+| EFF10 | Effectif de main-d’œuvre salariée régulière (hors chef) | — |
+| EFF11 | Effectif de main-d’œuvre salariée non régulière | CTYPDEC + CNATEMP + CQUASAL |
+| TVLTT | Nombre total d’heures travaillées (hors MO non salariée permanente) | — |
+
+Les principales problématiques:
+
+-   Peut on différencier Temporaire et occasionel/saisonnier dans la MSA?
+-   Peut on identifier chef d'exploitation salarié?
+-   Il nous faut l'effectif (count par siret) et temps de travail
+
+
+### Peut on reconnaitre les chefs salariés RICA dans la MSA
+
+Sur les 3460 exploitations matchés (RICA), 22 contiennent un chef d'exploitation salarié. Ici, on récupère ces 22 SIRET et on regarde les composition salariale correspondante dans la MSA. Plusieurs variables candidates à l'identification des chefs salariés sont étudiés:
+
+-   CCADEMP: Cadre employé
+-   CNATDURC == 0: Nature de la durée du contrat == sans contrat de travail
+-   CQUASAL == 420: Qualité de salarié == mandataire social
+
+```{r}
+#-------------------------------------------------------
+# Comparaison des effectifs salariés MSA vs RICA sur matchs
+#-------------------------------------------------------
+
+# Filtrer pour les exploitations ou les salariés sont présents à la MSA/RICA
+siret_matched = rica2[salarie_in_MSA==TRUE & salarie_in_RICA==TRUE, SIRET]
+
+# MSA: chaque ligne correspond à un salarié
+msa_sal = msa_s[SIRET %in% siret_matched]
+
+# RICA: chaque ligne correspond à une exploitation (agrégé)
+rica_sal = rica_s[SIRET %in% siret_matched]
+
+#-------------------------------------------------------
+# Peut on reconnaitre les chef salariés RICA dans la MSA
+#-------------------------------------------------------
+  
+# Selectionner SIRET ou il y a chef d'exploit. salarié dans le RICA
+siret_chef_sal = rica_sal[ANA09>0, SIRET]
+
+# Retrouver tous les salariés correspondant à ces SIRET dans MSA
+msa_siret_chef_sal = msa_sal[SIRET %in% siret_chef_sal,]
+
+# La variable 'cadre' match elle avec 'chef d'exploit. sal.'
+msa_siret_chef_sal[, .(Nombre_de_cadres = sum(as.numeric(CCADEMP))), by=SIRET] %>%
+  tabyl(Nombre_de_cadres)
+
+# La variable 'CNATDURC' (0 = sans contrat de travail) match elle avec 'chef d'exploit. sal.'
+msa_siret_chef_sal[, .(Nombre_de_sans_contrat_de_travail = sum(CNATDURC==0)), by=SIRET] %>%
+  tabyl(Nombre_de_sans_contrat_de_travail)
+
+# La variable 'CQUASAL' ( 420 = mandataire social) match elle avec 'chef d'exploit. sal.'
+msa_siret_chef_sal[, .(Nombre_de_mandataires_sociaux = sum(CQUASAL=="420")), by=SIRET] %>%
+  tabyl(Nombre_de_mandataires_sociaux)
+
+```
+
+Ces 3 variables sont fortement corrélés mais n'identifie malheureusement qu'un peu moins de la moitié des chef salariés RICA. En plus de ça, si l'on prends toutes les autres exploitations nonchef-sal RICA, on retrouve aussi quelques valeurs positives --> le champs n'est pas exactement le même et variables pas assez discriminatives...
+
+### Comparaison de la composition salariale en nombre
+
+On regarde maintenant le nombre de salarié (total, régulier et non-régulier) par exploitation ou SIRET. Le premier challenge est d'identifier si le salarié est permanent ou non dans la MSA, car il n'y a pas de variable vraiment très claire permettant d'identifier cela, et on ne peut pas savoir si la définition de permanent dans la MSA correspond à celle de RICA.
+
+```{r}
+#-------------------------------------------------------
+# Effectif total salarié RICA
+#-------------------------------------------------------
+
+
+# Création d'une variable total de salariés
+rica_sal[, tot_sal := rowSums(.SD, na.rm = TRUE),
+         .SDcols = c("EFF10", "EFF11")]
+
+# Sélectionner colonnes d'intérêts
+comp_sal_rica = rica_sal[, .(
+  SIRET,
+  tot_sal,
+  tot_sal_reg = EFF10,
+  tot_sal_non_reg = EFF11
+)]
+
+# Remplacer NAs par 0
+setnafill(comp_sal_rica, type = "const", fill = 0, 
+          cols = which(sapply(comp_sal_rica, is.numeric))) 
+
+
+#-------------------------------------------------------
+# Effectif total salarié MSA
+#-------------------------------------------------------
+
+## 1. DRAPEAUX PRINCIPAUX (aucune variable temporelle)
+
+msa_sal[ , `:=`(
+  # flg_tesa    = CTYPDEC == "1", # type de déclaration: "emploi saisonnier agric."
+  flg_cnat    = CNATEMP %in% c("1", "5", "8", "I", "J" ), # saisonnier ou vendange
+  flg_cquasal = CQUASAL == "140" # travailleur occasionnel
+  # flg_full    = CNATTEMP == "1" # uniquement travail temps plein dans l'année
+)]
+
+## 2. ATTRIBUTION DU STATUT (identification stricte)
+msa_sal[ , statut := fifelse(
+  flg_cnat | flg_cquasal,             # saisonnier explicite
+  "occasionnel/saisonnier",
+  "permanent"
+)]
+
+## --- 3. CHECKS basés sur volumes & dates ---
+seuil_j = 52
+seuil_h = 364
+
+## a. volumes
+msa_sal[ , flg_vol := NBJOURS >= seuil_j | NBHEU >= seuil_h ]
+
+## b. dates de début / fin
+msa_sal[, `:=`(
+  date_deb = as.IDate(as.character(EACTOES), "%Y%m%d"),
+  date_fin = as.IDate(as.character(FACTOES), "%Y%m%d")
+)]
+
+## c. durée en semaines puis drapeau span
+msa_sal[, span_sem := as.integer((date_fin - date_deb + 1L) / 7L)]
+msa_sal[, flg_span := span_sem >= 26]  # ≥ 26 semaines ≈ 6 mois
+
+## d. signal incohérence (inchangé)
+msa_sal[, check_flag := fifelse(
+  statut == "permanent" & !(flg_vol | flg_span),
+  "à contrôler",
+  ""
+)]
+
+comp_sal_msa = msa_sal[NBHEU!=0, ]
+
+# Création d'une variable total de salariés
+comp_sal_msa[, tot_sal := .N, by="SIRET"]
+comp_sal_msa[, tot_sal_reg := sum(statut=="permanent", na.rm = TRUE), by="SIRET"]
+comp_sal_msa[, tot_sal_non_reg := sum(statut=="occasionnel/saisonnier", na.rm = TRUE), by="SIRET"]
+
+# Sélectionner colonnes d'intérêts
+comp_sal_msa = comp_sal_msa[, .(
+  SIRET,
+  tot_sal,
+  tot_sal_reg,
+  tot_sal_non_reg
+)][!duplicated(SIRET)]
+
+# Remplacer NAs par 0
+setnafill(comp_sal_rica, type = "const", fill = 0, 
+          cols = which(sapply(comp_sal_rica, is.numeric))) 
+
+
+#-------------------------------------------------------
+# COMPARAISON
+#-------------------------------------------------------
+
+# Mixer les deux tables
+comp_sal_both = merge(
+  comp_sal_rica,
+  comp_sal_msa,
+  by = "SIRET",
+  suffixes = c("_rica", "_msa")
+)
+
+# Extraction nom de toutes les colonnes RICA
+cols_rica = grep("_rica$", names(comp_sal_both), value = TRUE)
+
+# Création d'une table résumé diagnostic
+res = rbindlist(lapply(cols_rica, function(col_rica) {
+  base  = sub("_rica$", "", col_rica)             # racine du nom
+  col_m = paste0(base, "_msa")                    # colonne jumelle MSA
+  
+  comp_sal_both[, .(
+    variable   = base,                            # nom commun
+    obs        = .N,                              # nombre de lignes
+    egaux      = sum(get(col_rica) == get(col_m)),
+    differents = sum(get(col_rica) != get(col_m)),
+    pct_ok     = round(100 * mean(get(col_rica) == get(col_m)), 1)
+  )]
+}))
+
+# Voir table
+head(comp_sal_both, 20)
+print(res)
+```
+
+Le principal problème avec les données de la MSA est l'absence d'une variable indiquant explicitement le type d'emploi : permanent, saisonnier, ou intérimaire. Pour pouvoir comparer la composition salariale avec la base RICA, j’ai identifié plusieurs variables susceptibles d’aider :
+
+- CNATEMP %in% c("1", "5", "8", "I", "J") : emploi saisonnier ou vendanges
+- CQUASAL == "140" : travailleur occasionnel
+
+À titre de vérification, j’utilise les dates de début et de fin de contrat, ainsi que le nombre d’heures et de jours travaillés, pour évaluer la cohérence du statut (permanent ou saisonnier) défini précédemment. Toutefois, les définitions exactes de ces variables ne sont pas précisées, ce qui rend difficile de savoir si les champs sont comparables.
+
+En ce qui concerne le nombre total de salariés, seuls 42 % des SIRET correspondent entre les bases, avec un taux de correspondance plus élevé pour les salariés permanents (55 %) et plus faible pour les saisonniers (37 %). On pourrait considérer la MSA comme base de référence, mais on rencontre également des difficultés à distinguer salariés et non-salariés dans la base des salariés, ainsi qu’à séparer, selon nos critères, les travailleurs permanents des temporaires.
+
+## SIRET NON APPARIÉS ENTRE RICA ↔ MSA
+
+### SIRET RICA : appariés en MSA salariés mais pas en non-salariés ?
+
+Nous avions vu qu'environ 10% des 7200 exploitations RICA en 2023 ne trouvaient pas de correspondance dans la base non-salariés MSA. Presque toutes les exploitations sont composés de chef d'exploitation non-salariés, ce qui parait donc étonnant.
+
+Une hypothèse est que pour certaines raisons (règles cotisations), certains chef d'exploitations non-salariés se retrouvent dans la base MSA salariés.
+
+```{r}
+#-----------------------------
+# Appariement exact par SIRET
+#-----------------------------
+
+rica_s_msa = merge(rica_s, msa_s[!duplicated(SIRET)], by = "SIRET", all.x = TRUE)
+rica_ns_msa = merge(rica_ns_dedup, msa_ns[!duplicated(SIRET)], by = "SIRET", all.x = TRUE)
+
+#-------------------------------
+# Diagnostic SIRET non-appariés
+#-------------------------------
+
+# SIRET non-appariés dans la base non-salarié
+siret_miss_ns = rica_ns_msa[is.na(A_IDENT), SIRET]
+
+# SIRET appariés dans la base salarié
+siret_matched_s = rica_s_msa[!is.na(NUM), SIRET]
+
+# Combien de SIRET manquant non-salariés MSA se trouvent dans salariés MSA?
+cat("Il y a au total", n_distinct(siret_miss_ns), "SIRET non-appariés entre les bases non-salariés RICA et MSA.", "\nSur ces",  n_distinct(siret_miss_ns), "SIRET,", sum(siret_miss_ns %in% siret_matched_s), "apparaissent dans la base salarié MSA. Et donc", n_distinct(siret_miss_ns)-sum(siret_miss_ns %in% siret_matched_s), "SIRET ne sont pas du tout appariés entre RICA et MSA.")
+
+```
+
+Les **506 SIRET** non appariés seront étudiés dans la sous-section suivante. On identifie cependant **333 SIRET** sans cotisants non-salariés mais avec des cotisants salariés. En croisant la date de naissance et le sexe des non-salariés (issus de RICA), on peut vérifier s’ils apparaissent, ou non, dans la base salariés.
+
+```{r}
+#---------------
+# Preprocessing 
+#---------------
+
+# Selection des individus appartenant à ces 333 sirets (n.s. RICA et s. MSA)
+rica_ns_333 = rica_ns[SIRET %in% siret_miss_ns & SIRET %in% siret_matched_s, ]
+msa_s_333 = msa_s[SIRET %in% siret_miss_ns & SIRET %in% siret_matched_s, ]
+
+# Harmonisation du nom des variables
+msa_s_333[, SEXEP := fifelse(CSEX == 1, "M", "F")]
+msa_s_333[, ANAIS := as.numeric(substr(DNAIIND, 1, 4))]
+
+#----------------------------------------------------------
+# Ajouter flag de correspondance dans la base non-salariés 
+#----------------------------------------------------------
+
+# Clés
+setkey(rica_ns_333, SIRET, SEXEP, ANAIS)
+setkey(msa_s_333, SIRET, SEXEP, ANAIS)
+
+# Flag : chaque non-salarié est-il aussi salarié ?
+rica_ns_333[, match_salarie := msa_s_333[.SD, on = .(SIRET, SEXEP, ANAIS), 
+                                         .N, by = .EACHI]$N > 0]
+#------------------
+# Résumé par SIRET 
+#------------------
+
+# Comptage par exploitation
+resume_par_siret = rica_ns_333[, .(
+  nb_non_salaries = .N,
+  nb_matches = sum(match_salarie)
+), by = SIRET]
+
+# Catégorisation des cas
+resume_par_siret[, match_type := fcase(
+  nb_matches == 0, "Pas de n.s. dans s.",
+  nb_matches < nb_non_salaries, "Pas tous les n.s. dans s.",
+  nb_matches == nb_non_salaries, "Tous les n.s. dans s."
+)]
+
+# Compter le nombre de SIRET dans chaque cas
+tableau_final = resume_par_siret[, .N, by = match_type]
+tableau_final
+
+```
+
+Le tableau ci-dessus montre que, parmi les 333 exploitations, **environ 80 %** n’ont aucun de leurs non-salariés RICA présents dans la base MSA salariés. **Environ 10 %** présentent au moins un non-salarié RICA, mais pas tous, et les **10 % restants** retrouvent l’ensemble de leurs non-salariés dans la base salariés.
+
+A noter que le croisement repose uniquement sur le sexe et l’année de naissance. Il est donc possible qu’un salarié lambda partage ces caractéristiques avec un non-salarié RICA. L’année de naissance peut aussi être mal renseignée dans RICA, mais quelques vérifications manuelles grâce à [L'Annuaire des Entreprises](https://annuaire-entreprises.data.gouv.fr/) (en utilisant le SIRET) suggèrent que les correspondances sont bonnes.
+
+```{r}
+#-------------------------------------
+# Comparaison par type d'exploitation
+#-------------------------------------
+
+# Dictionnaire des libellés FJURI
+fjuri_labels = data.table(
+  FJURI = c(1, 2, 3, 4, 5, 9),
+  FJURI_label = c(
+    "Exploitation individuelle", "GAEC", "EARL",
+    "Autre société civile (SCEA)", "SA, SARL, EURL, SNC",
+    "Autre forme juridique"
+  )
+)
+
+# Associer chaque non-salarié à son match_type
+rica_ns_333 <- merge(
+  rica_ns_333,
+  resume_par_siret[, .(SIRET, match_type)],
+  by = "SIRET", all.x = TRUE
+)
+
+# Comptage et pourcentages
+tab <- rica_ns_333[, .N, by = .(match_type, FJURI)][
+  , pct := round(100 * N / sum(N), 0), by = match_type][
+  fjuri_labels, on = "FJURI"]
+
+# Tableau final : lignes = libellés FJURI, colonnes = catégories match_type
+table_pct <- dcast(tab, FJURI_label ~ match_type, value.var = "pct", fill = 0)
+table_pct
+```
+
+Finalement, le tableau ci-dessus permet de comparer chaque catégorie selon le type d’exploitation (en pourcentage). On observe quelques différences notables, mais rien de choquant.
+
+```{r}
+#---------------------------
+# Aperçu des n.s. retrouvés
+#---------------------------
+
+# Extraire les non-salariés ayant un match salarié
+non_salaries_retrouves = rica_ns_333[match_salarie == TRUE]
+
+# Effectuer une jointure pour récupérer les infos correspondantes dans msa_s_333
+aperçu_retrouves = msa_s_333[non_salaries_retrouves, 
+                             on = .(SIRET, SEXEP, ANAIS), 
+                             nomatch = 0]
+
+# Affichage d’un extrait (10 premières lignes par défaut)
+aperçu_retrouves[, .(SIRET,DNAIIND,SEXEP,CCADEMP,CQUASAL,CNATDURC,CCOTUNE,CTYPEMP,CTYPCON)]
+
+```
+
+Le tableau ci-dessus présente les 103 individus (sur 65 exploitations) retrouvés comme non-salariés dans la base MSA salariés. Les colonnes affichées sont celles qui pourraient, en théorie, aider à distinguer les non-salariés des salariés classiques. Mais en les comparant aux vrais salariés, aucune variable ne ressort vraiment : rien de suffisamment discriminant ou robuste pour identifier les non-salariés dans les prochaines vagues MSA.
+
+### SIRET RICA appariés nulle part ? Pourquoi ?
+
+#### Distribution géographique et juridique (type d'exploitation)
+
+L’objectif ici est de comprendre pourquoi 506 exploitations ne sont **pas du tout appariées** avec la MSA. Est-ce qu’elles présentent des caractéristiques particulières (zone géographique, type d’exploitation) ? Ou est-ce simplement lié à des SIRET non à jour ?
+
+```{r}
+#---------------
+# Preprocessing
+#---------------
+
+# Selection des exploitations non apparies dans la base n.s. RICA
+rica_ns_506 = rica_ns_dedup[SIRET %in% siret_miss_ns & !(SIRET %in% siret_matched_s), ]
+
+# Merge avec exploitation pour récupérer département
+rica_ns_506 = merge(
+  rica_ns_506,
+  exploit[, .(NOM_DOSSIER, CDEPT)],
+  by = "NOM_DOSSIER",
+  all.x = TRUE
+)
+rica_ns_dedup = merge(
+  rica_ns_dedup,
+  exploit[, .(NOM_DOSSIER, CDEPT)],
+  by = "NOM_DOSSIER",
+  all.x = TRUE
+)
+
+# Labels pour type d'exploitation
+rica_ns_506 = rica_ns_506[fjuri_labels, on = "FJURI"]
+rica_ns_dedup = rica_ns_dedup[fjuri_labels, on = "FJURI"]
+
+# Formatter la variable
+rica_ns_506[, CDEPT := fifelse(
+  CDEPT %in% c("974", "971"),
+  "Outre-mer", "Métropole"
+)]
+rica_ns_dedup[, CDEPT := fifelse(
+  CDEPT %in% c("974", "971"),
+  "Outre-mer", "Métropole"
+)]
+
+#---------
+# Analyse
+#---------
+
+# Distribution par département
+bind_rows(
+  rica_ns_506 %>% mutate(source = "rica_non_appariés"),
+  rica_ns_dedup %>% mutate(source = "rica_complet")
+) %>%
+  tabyl(CDEPT, source) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting()
+
+cat("\n\n")
+
+# Distribution par type d'exploitation
+bind_rows(
+  rica_ns_506 %>% mutate(source = "rica_non_appariés"),
+  rica_ns_dedup %>% mutate(source = "rica_complet")
+) %>%
+  tabyl(FJURI_label, source) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting()
+
+```
+
+On voit clairement que les territoires d’outre-mer sont sur-représentés parmi les 506 exploitations non appariées. Les exploitations de type individuel et SCEA le sont aussi, mais dans une moindre mesure.
+
+#### Autres caractéristiques des exploitations non-appariés
+
+Afin d'analyser la situation de ces exploitations non appariés, nous prenons un échantillon de 45 SIRET, et nous collecter manuellement certaines données provenant de [L'Annuaire des Entreprises](#0) que nous importons ensuite pour analyser les résultats.
+
+```{r}
+#---------------------------------------------------
+# Récupération d'un échantillon + données associées
+#---------------------------------------------------
+
+# Echantillon aléatoire de 45 SIRET sur les 506 non-appariés
+# set.seed(123)
+# rica_ns_506[sample(.N, 45), SIRET]
+
+# Scrap manuel d'informations sur ces 45 SIRET --> "https://annuaire-entreprises.data.gouv.fr/"
+path_scrap = "~/CERISE/00-Espace-Personnel/alfonso.awadalla/Mes fichiers/SIRET_non_appar_rica_msa_scrapped.csv"
+rica_ns_45 = fread(path_scrap) 
+
+#----------------------------------------------
+# Checks de représentativité sur l'échantillon
+#----------------------------------------------
+
+# Merge pour obtenir autres info
+test = merge(
+  rica_ns_45[, SIRET:=as.numeric(SIRET)],
+  rica_ns_506[, SIRET:=as.numeric(SIRET)],
+  by="SIRET",
+  all.x = TRUE
+)
+
+# Tables à comparer avec celles de la sous-section précédente
+tabyl(test, CDEPT)%>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting()
+cat("\n\n")
+tabyl(test, FJURI_label)%>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting()
+cat("\n\n")
+
+#---------
+# Analyse
+#---------
+
+# Fonction pour convertir variable binaire en résumé stat
+binary_to_pct = function (var) {
+  x = mean(var) * 100
+  x = round(x, digits = 0)
+  paste0(x,"%")
+}
+
+# Céation de moyenne en pct
+a = binary_to_pct(rica_ns_45$ACTIVITE2023)
+b = binary_to_pct(rica_ns_45$AUTRE_ACTIVITE2023)
+c = binary_to_pct(rica_ns_45$AUTRE_ANCIEN)
+d = binary_to_pct(rica_ns_45$FERME_FIN2023)
+
+# Résultat
+cat("Sur cet échantillon représentatif des 506 SIRET non appariés :\n",
+    "-", a, "sont en activité en 2023\n",
+    "-", b, "ont une autre exploitation active la même année\n",
+    "-", c, "avaient une autre exploitation ayant fermé par le passé\n",
+    "-", d, "étaient actifs en 2023 mais ont fermé leur exploitation en fin d’année")
+
+```
+
+Malgré une petite part des cas concernant des exploitations fermées en 2023, plus de 90 % étaient encore actives cette année-là. Par ailleurs, seulement 11 % avaient d’anciens établissements fermés, ce qui pouvait expliquer quelques problèmes de mise à jour du SIRET dans RICA ou MSA. Le souci semble donc venir principalement des données MSA..
+
+### Utilisation d'autres SIREN associés à l'exploitation pour ré-appariement
+
+Après avoir fait quelques check manuels sur les \~800 SIRETS non appariés, il se trouve que certains non-salariés d'une exploitation apparaissent sous un autre SIREN dans la MSA (car l'individu possède plusieurs entités légales). L'idée était donc de pouvoir retrouver les autres SIREN associés au SIRET/SIREN de l'exploitation RICA et voir si l'appariement RICA-MSA fonctionne.
+
+Nous avons tout d'abord essayés d'utiliser l'API de l'INPI, cependant il ne nous permettait pas de récupérer l'information voulu (autre entreprises de l'exploitant). Un programme de webscrapping a donc été développé sur Python afin de récupérer cette information sur [L'Annuaire des Entreprises](#0) (code ci-dessous).
+
+```{python, eval=FALSE}
+"""
+Pour chaque SIRET :
+- recherche sur annuaire-entreprises.data.gouv.fr
+- onglet Dirigeants
+- boucle sur chaque bouton « Ses entreprises »
+- extrait tous les SIREN 9 chiffres != SIREN d’origine
+⇢ Affiche un récap final et écrit siren_associes.csv
+"""
+
+import pandas as pd
+import re, csv, time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+# ----------------------------------------------------------------------
+# 1. PARAMÈTRES UTILISATEUR
+# ----------------------------------------------------------------------
+CHROMEDRIVER_PATH = r"C:\Users\alfonso.awadalla\Desktop\My Files\chromedriver\chromedriver.exe"  
+SIRETS_PATH = r"C:\Users\alfonso.awadalla\Desktop\My Files\siret_missing.csv"
+CHROME_BINARY = None                              
+HEADLESS = True   
+
+SIRETS = pd.read_csv(SIRETS_PATH, dtype=str).iloc[:, 0].tolist()
+
+OUTFILE = "siren_associes.csv"                         
+
+# ----------------------------------------------------------------------
+# 2. OUTILS SELENIUM
+# ----------------------------------------------------------------------
+def build_driver() -> webdriver.Chrome:
+    opts = Options()
+    if HEADLESS:
+        opts.add_argument("--headless=new")  # Chrome ≥124
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    if CHROME_BINARY:
+        opts.binary_location = CHROME_BINARY
+
+    service = Service(executable_path=CHROMEDRIVER_PATH)
+    driver  = webdriver.Chrome(service=service, options=opts)
+    driver.set_window_size(1280, 900)
+    return driver
+
+
+def wait_clickable(driver, locator, timeout=5):
+    return WebDriverWait(driver, timeout).until(EC.element_to_be_clickable(locator))
+
+
+def wait_presence(driver, locator, timeout=8):
+    return WebDriverWait(driver, timeout).until(EC.presence_of_element_located(locator))
+
+
+def extract_siren_visible(html: str) -> set[str]:
+    """Renvoie les SIREN visibles au format 'XXX XXX XXX' dans le HTML, sans ceux passés en href."""
+    # regex pour 3 groupes de 3 chiffres séparés par espace ou insécable
+    pattern = r"\b(\d{3}[ \u00A0]\d{3}[ \u00A0]\d{3})\b"
+    found = re.findall(pattern, html)
+    # enlever espaces pour ne conserver que les 9 chiffres
+    return {siren.replace(" ", "") for siren in found}
+    
+# ----------------------------------------------------------------------
+# 3. TRAITEMENT PRINCIPAL
+# ----------------------------------------------------------------------
+def main():
+    driver = build_driver()
+    wait   = WebDriverWait(driver, 12)
+    base   = "https://annuaire-entreprises.data.gouv.fr/"
+    results = []  # liste des résultats pour CSV
+
+    for siret in SIRETS:
+        siren_origin = siret[:9]
+        associes     = set()
+
+        # --- 3.1 recherche établissement ------------------------------
+        driver.get(base)
+        search = wait_clickable(driver, (By.CSS_SELECTOR, "#search-input-input"))
+        search.clear()
+        search.send_keys(siret + Keys.ENTER)
+        wait.until(EC.url_contains("/etablissement/"))
+
+        # --- 3.2 onglet Dirigeants ------------------------------------
+        try:
+            tab_dirigeants = wait_clickable(driver, (By.LINK_TEXT, "Dirigeants"))
+        except TimeoutException:
+            # pas d'onglet Dirigeants, passer au siret suivant
+            continue
+        tab_dirigeants.click()
+        
+        # attendre le chargement complet du contenu
+        wait_presence(driver, (By.TAG_NAME, "body"))
+
+        # --- 3.3 extraction des SIREN sur la page Dirigeants -------
+        page_sirens = extract_siren_visible(driver.page_source)
+        found_here  = {s for s in page_sirens if s != siren_origin}
+        if found_here:
+            associes.update(found_here)
+
+        # --- 3.4 liste des boutons "voir ses entreprises" -----------
+        try:
+            wait_clickable(driver, (By.PARTIAL_LINK_TEXT, "voir ses entreprises"))
+            boutons = driver.find_elements(By.PARTIAL_LINK_TEXT, "voir ses entreprises")
+        except Exception:
+            boutons = []
+
+        # --- 3.5 boucle sur chaque bouton ----------------------------
+        for btn in boutons:
+            
+            lien = btn.get_attribute("href")
+            # ouvrir dans un nouvel onglet
+            driver.execute_script("window.open(arguments[0], '_blank');", lien)
+            driver.switch_to.window(driver.window_handles[-1])
+
+            # attendre que la page charge
+            wait_presence(driver, (By.TAG_NAME, "body"))
+
+            # extraire tous les SIREN sur cette page
+            siren_trouves = extract_siren_visible(driver.page_source)
+            new_assocs = {s for s in siren_trouves if s != siren_origin}
+            if new_assocs:
+                associes.update(new_assocs)
+
+            # fermer l’onglet et revenir
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+            
+        # --- 3.6 préparation du résultat ------------------------------
+        sirens_str = ";".join(sorted(associes)) if associes else "NA"
+        results.append({"siret": str(siret), "siren_associes": sirens_str})
+        print(f"• {siret} – entreprises associées: {sorted(associes)}")
+
+    
+    # --- 3.7 écriture CSV final -------------------------------------
+    with open(OUTFILE, "w", newline="", encoding="utf-8") as fp:
+        writer = csv.DictWriter(fp, fieldnames=["siret", "siren_associes"])
+        writer.writeheader()
+        writer.writerows(results)
+
+    driver.quit()
+
+if __name__ == "__main__":
+    main()
+
+```
+
+Maintenant que nous avons cette information pour chaque SIRET non-apparié, nous allons réessayer de faire la correspondance avec les données MSA.
+
+```{r}
+
+# 1) Expansion : une ligne par SIRET–SIREN associé, puis déduplication
+siret_siren = siret_ass[
+  , .(siren = unlist(strsplit(siren_associes, ";"))),
+  by = .(siret)
+]
+siret_siren = unique(siret_siren)
+
+# 2) Préparation de msa_ns : extraction du SIREN et format naissance
+msa_ns[
+  , siren := substr(SIRET, 1, 9)
+][
+  , nais := paste0(NAIS_MO, "/", NAIS_AN)
+]
+
+# 3) On retire les SIREN NA pour éviter les matches inutiles
+msa_unique = unique(
+  msa_ns[!is.na(siren), .(siren, nais)]
+)
+
+# 4) Jointure many-to-many autorisée
+matches = merge(
+  siret_siren,
+  msa_unique,
+  by = "siren",
+  all = FALSE,
+  allow.cartesian = TRUE
+)
+
+# 5) Numérotation des individus par SIRET
+matches[, indiv_num := seq_len(.N), by = siret ]
+
+# 6) Création de la liste de SIREN retrouvés
+sirens_list = matches[
+  , .(sirens_found = paste(unique(siren), collapse = ";")),
+  by = siret
+]
+
+# 7) Pivot “wide” pour les naissances (indiv1, indiv2, …)
+wide = dcast(
+  matches,
+  siret ~ indiv_num,
+  value.var = "nais"
+)
+# Renommer en indiv1, indiv2, …
+indivs <- setdiff(names(wide), "siret")
+setnames(wide, indivs, paste0("indiv", indivs))
+
+# 8) Merge final pour conserver tous les SIRET de siret_ass
+#    et y ajouter : siren_associes (brut), sirens_found, et indiv*
+result = merge(
+  siret_ass[, .(siret, siren_associes)],
+  sirens_list,
+  by = "siret",
+  all.x = TRUE
+)
+result = merge(
+  result,
+  wide,
+  by = "siret",
+  all.x = TRUE
+)
+
+# Réorganisation éventuelle des colonnes
+setcolorder(result, c(
+  "siret",
+  "siren_associes",
+  "sirens_found",
+  paste0("indiv", seq_len(length(indivs)))
+))
+
+# Ajout d'une colonne pour voir correspondance avec les 333 SIRET qui sont dans la base sal. mais pas non-sal. MSA
+result[, siret_in_msa_s := siret %in% rica_ns_333[, SIRET]]
+
+# Voir résultat
+result[order(sirens_found, siren_associes)]
+
+# Calcul stats.
+a = sum(!is.na(result$indiv1) & result$siret_in_msa_s==TRUE)
+b = sum(is.na(result$indiv1) & result$siret_in_msa_s==TRUE)
+c = sum(!is.na(result$siren_associes))
+d = sum(!is.na(result$sirens_found))
+e = sum(grepl(";", result$sirens_found))
+
+# Analyse
+cat("- Nous avions vu que 333 SIRETS non-appariés dans la base non-salariés MSA pouvaient être retrouvés dans la base salariés MSA. Sur ces 333 SIRETS,",a,"sont associés à un autre SIREN dans la base non-salarié MSA et", b, "ne le sont pas.")
+cat("\n\n- Sur les 839 SIRET non-appariés dans la base ns MSA,",c,"de(s) exploitant(s) sont associés à un ou plusieurs autres SIREN,",d, "de ces SIRET sont effectivement retrouvés dans la base non sal. MSA grâce aux SIREN associés et",e,"sont appariés mais sur plusieurs SIREN.")
+
+```
+On comprends donc que certains non-salariés d'une exploitation apparaissent donc sur la base MSA non-salariés avec un autre SIREN, c'est à dire sous une autre entité légale. On peut checker manuellement pour chaque SIRET, si les non-salariés retrouvés dans la MSA grâce aux autres SIREN associés, correpondent bien à ceux de l'exploitation (grâce à la date de naissance). Dans certains cas, les non-salariés correspondent exactement, dans d'autres cas il y en à trop (ce qui est compréhensible, car une ferme peut contenir plusieurs exploitation avec des non-salariés différents, mais tous rémunérés par un même SIREN). Et parfois on retrouve des non-salariés qui ne sont pas affiliés au même SIREN dans la base MSA (contenu dans les 32 cas de multiples SIREN appariés).
+
+Sans oublier les 53% SIRET (sur les 839 non-appariés) qui n'ont pas d'autres SIREN associés mais ne sont pas appariés non-plus, et les 20% associés à d'autres SIREN mais qui ne matchent pas dans la base non-sal. MSA. Et encore les 32 cas avec plusieurs SIREN appariés qui sont parfois ambiguës.
+
+### Conclusions
+
+En résumé, deux cas se dégagent. D’abord, les 333 exploitations dont les non-salariés RICA ne sont pas retrouvés dans la base MSA non-salariés, mais parfois dans la base salariés. Il est possible que certains chefs d’exploitation soient déclarés comme salariés pour des raisons liées aux cotisations ou au statut juridique, ou qu’il y ait des erreurs ou imprécisions de déclaration côté MSA. Ensuite, les 506 exploitations totalement absentes des deux bases MSA. Elles sont sur-représentées en outre-mer et parmi les formes individuelles ou SCEA. Un échantillon montre que la grande majorité étaient actives en 2023, avec peu de cas de fermeture récente. Le problème semble donc venir des fichiers MSA eux-mêmes : certaines exploitations pourraient ne pas cotiser ou être absentes pour des raisons administratives.
+
+## UTILISATION DE FLORES POUR IDENTIFIER LES INTÉRIMAIRES
+
+Le passage de RICA à RIDEA impose d'intégrer des informations sur la main-d’œuvre externe/intérimaire : nombre de personnes, volume de travail annuel, et part des AAL (genre facultatif). Youcef et François m'ont confirmé que RICA ne couvre pas ces travailleurs (seuls ceux payés par l’exploitation sont comptés), bien que leurs charges apparaissent en passif.
+
+Dans le fichier MSA "salariés", la variable **CQUASAL == 906** désigne les contrats intérimaires via ETT. Or, aucun des deux millions de salariés agricoles en 2023 n'est associé à ce code. On en déduit que, comme RICA, la MSA n’intègre pas ces intérimaires. C’est logique : ils sont payés par leur agence (généralement affiliée au régime général) et dans le cas rare d'agences agricoles, ils ne seraient de toute manière pas liés au SIRET de l’exploitation.
+
+La base **FLORES (INSEE)** fournit, par établissement ou entreprise, le nombre et les heures des intérimaires sur l’année. Seul problème: les données sont disponibles en N+2, ce qui limite leur utilité pour un RICA en N+1. On souhaite malgré tout explorer le champs des possibles.
+
+```{r, eval=FALSE}
+#---------------------------
+# Appariement FLORES ↔ RICA
+#---------------------------
+
+# On test deux appariements, un avec SIRET et un avec SIREN
+rica_ns[, SIREN := substr(SIRET, 1, 9)]
+flores_siret_rica = flores[siret %in% unique(rica_ns$SIRET), ]
+flores_siren_rica = flores[siren %in% unique(rica_ns$SIREN), ]
+
+# Stats
+sal_rica = nrow(rica_s[TVLTT>0, ]) # nb total siret avec sal. RICA
+sal_flores1 = nrow(flores_siret_rica) # nb match flores avec siret
+sal_flores2 = nrow(flores_siren_rica) # nb match flores avec siren
+
+# Différence d'appariement
+cat("Sur", sal_rica, "exploitations RICA contenant des salariés:\n",
+    "-", sal_flores1, "ont été retrouvé dans FLORES en appariant avec les SIRET\n",
+    "-", sal_flores2, "ont été retrouvé dans FLORES en appariant avec les SIREN\n",
+    "-", sal_rica-sal_flores2, "sont introuvables dans FLORES même avec le SIREN")
+
+# View(flores_siren_rica[!(siret %in% flores_siret_rica$siret), ])
+```
+
+L’appariement FLORES–RICA via le SIREN permet de retrouver une centaine d’exploitations en plus qu’avec le SIRET. En consultant [L'Annuaire des Entreprises](#0), cela semble parfois lié à un remplacement d’exploitation (nouveau SIRET, mais SIREN identique, donc appariement cohérent). Mais on observe aussi des cas où plusieurs SIRET sont actifs, et le SIREN pointe simplement vers le mauvais établissement. Par souci de robustesse, on poursuit donc l’analyse avec l’appariement SIRET.
+
+Les **502 SIREN introuvables** correspondent vraisemblablement, comme l’a noté Corentin, à des salariés rattachés à une autre entreprise de l’employeur. Ce problème pourrait être résolu ultérieurement via web scraping ou API pour retrouver le bon SIRET.
+
+```{r, eval=FALSE}
+## Analyse visuelle des données
+# View(flores_siret_rica)
+
+## Analyse visuelle des données représentative toute industrie
+# View(flores[sample(.N, 100000), ])
+
+## Vérifications manuelles du nombre de salariés et d'heures pour un SIRET
+# nrow(msa_s[SIRET=="80900794100010",])
+# sum(msa_s[SIRET=="80900794100010",]$NBHEU)
+
+# Nombre de SIRET ayant vraisemblablement eu un intérimaire
+e = nrow(flores_siret_rica[effeqtp_interim_util>0, ])
+cat(e, "ou", round(e/sal_flores1*100, 1),"% des exploitations appariées ont l'air d'avoir recruté au moins un intérimaire sur l'année 2023")
+```
+
+Les effectifs salariés et intérimaires dans FLORES ne sont disponibles que pour la dernière semaine de décembre des années N et N–1.
+
+Une variable intéressante est **effeqtp_interim_util** : elle mesure l’effectif intérimaire en équivalent temps plein (ETP) utilisé sur l’année. Si cette variable est positive, on peut conclure qu’au moins un intérimaire a été mobilisé. 55 exploitations (1,7%) présentent un ETP intérimaire \> 0 (est parfois presque insignifiant) – mais aucune autre information n’est disponible (heures, effectif total).
+
+Autre variable, **nbheur_intérim**, indique le nombre d’heures facturées à l’agence d’intérim, mais pas le volume d’heures réellement effectuées sur les exploitations. Elle ne permet donc pas d’estimer le travail réalisé par les intérimaires sur site.
+
+En revanche, la variable **nbheur** comptabilise bien, après vérifications croisées avec la MSA, le nombre total d’heures travaillées sur l’année par les salariés hors intérimaires (et non seulement ceux présents en décembre). D’où proviennent ces données ? Auraient-ils accès à des données individuelles sur les salariés par entreprise ?
+
+## APPARIEMENT RA ↔ MSA POUR SUIVRE L’ÉVOLUTION DES MICRO-BA
+
+Ce point concerne l’échantillonnage et la représentativité du RICA. Pour inclure les exploitations micro-BA et leur attribuer un poids, le RICA s’appuie sur les parts issues du Recensement Agricole (RA) — donc inchangées depuis 2020.
+
+L’objectif ici est d’utiliser les données MSA non-salariés, supposées exhaustives, pour estimer l’évolution de la part des micro-BA parmi l’ensemble des exploitations.
+
+Ce qui nous intéresse prioritairement, c’est la part de micro-BA dans le champ RICA (environ 20 % selon le RA 2020). Problème : pour identifier ce champ, il faudrait calculer le PBS, ce qui n’est pas faisable directement avec les données MSA.
+
+Nous nous contenterons donc ici d’estimer la part des micro-BA sur l’ensemble des exploitations actives.
+
+```{r, eval=FALSE}
+
+#--------------
+# Process. MSA
+#--------------
+
+# Liste des bases MSA
+msa_list = list(
+  "2017" = msa_ns17,  
+  "2018" = msa_ns18,  
+  "2019" = msa_ns19,  
+  "2020" = msa_ns20,
+  "2021" = msa_ns21,
+  "2022" = msa_ns22,
+  "2023" = msa_ns23,
+  "2024" = msa_ns24
+)
+
+# Création tableau MSA
+microba_dt <- rbindlist(lapply(names(msa_list), function(yr) {
+  dt <- as.data.table(msa_list[[yr]])[, .(NUM_EMPL, TYPE_IMP)]
+  dt <- unique(dt, by = "NUM_EMPL")
+  dt[, TYPE_IMP := as.character(TYPE_IMP)]
+  total <- nrow(dt)
+  micro_ba <- dt[TYPE_IMP == "1", .N]
+  data.table(annee = yr, total = total, micro_ba = micro_ba)
+}))
+
+microba_dt[, pct_micro_ba := round(100 * micro_ba / total, 1)]
+
+#-------------
+# Process. RA
+#-------------
+
+# RA : sélection et conversion
+ra_dt = as.data.table(ra)[, .(NOM_DOSSIER, IMPODET)]
+ra_dt[, IMPODET := as.character(IMPODET)]
+
+# RA comme référence séparée 
+ra_unique = unique(ra_dt, by = "NOM_DOSSIER")
+ra_total = nrow(ra_unique)
+ra_micro = ra_unique[IMPODET == "1", .N]
+ra_pct = round(100 * ra_micro / ra_total, 1)
+
+# Ajout des labels d'effectif pour tous
+microba_dt[, label := paste0(pct_micro_ba, "%\n(", total, ")")]
+ra_label = paste0("RA2020 : ", ra_pct, "%\n(", ra_total, ")")
+
+# Ordre des années
+microba_dt[, annee := factor(annee, levels = c("2017","2018","2019","2020","2021","2022","2023","2024"))]
+
+# Graphique 
+ggplot(microba_dt, aes(x = annee, y = pct_micro_ba, group = 1)) +
+  # Remplissage sous la courbe (avec contour noir)
+  geom_area(fill = "#18bc9c", alpha = 0.3, color = "black", linewidth = 0.5) +
+  # Courbe principale
+  geom_line(color = "#2c3e50", size = 1.2) +
+  geom_point(size = 3, color = "#18bc9c") +
+  # Labels pour chaque point
+  geom_text(aes(label = label), vjust = -1, size = 4) +
+  # Ligne horizontale RA2020
+  geom_hline(yintercept = ra_pct, linetype = "dotted", color = "black", linewidth = 0.8) +
+  # Label RA2020 placé sous la ligne
+  annotate("text", x = 0.5, y = ra_pct - 9.5, 
+           label = ra_label, hjust = 0, size = 4.2) +
+  # Échelle 0–100 %
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Évolution de la part d'exploitations micro-BA (MSA vs RA)",
+    subtitle = "Avec référence RA 2020 (pointillé)",
+    x = "Année",
+    y = "Part des exploitations micro-BA (%)"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+D’après les données MSA, la part de micro-BA en 2020 est estimée à 33,5%, très proche de celle issue du RA (33,9 %). Mis à part une légère inflexion entre 2017 et 2018, cette part évolue peu, avec une hausse modérée de +1,2% entre 2020 et 2023. En revanche, on observe une hausse marquée de +3,3% entre 2023 et 2024, probablement liée au relèvement du seuil micro-BA de 91 900 € à 120 000 € à partir de 2024.
+
+À noter qu'une petite part des exploitants MSA n’a pas de SIRET, numéro d’entreprise ou type d’imposition, et a donc été exclue de l’estimation.
+
+Il aurait été intéressant d’observer cette évolution sur le champ RICA uniquement, car ce dernier n’est pas forcément représentatif de l’ensemble des exploitations (exclusion de celles à faible PBS), et l'évolution de la part de micro-BA pourrait y être plus ou moins variable.
